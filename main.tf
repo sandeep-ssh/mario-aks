@@ -1,7 +1,7 @@
 # Resource Group (equivalent to AWS account/region scoping)
 resource "azurerm_resource_group" "mario_rg" {
   name     = "mario-aks-rg"
-  location = "australiaeast" # Equivalent to ap-south-1; change to your preferred Azure region
+  location = "eastus" # Matches your storage account region
 }
 
 # Virtual Network (equivalent to AWS default VPC)
@@ -30,15 +30,14 @@ resource "azurerm_kubernetes_cluster" "mario_aks" {
   dns_prefix          = "mario-aks"
 
   default_node_pool {
-    name           = "nodecloud"      # Equivalent to node_group_name = "Node-cloud"
-    node_count     = 1                # Equivalent to desired_size = 1
-    vm_size        = "Standard_B2s"  # Equivalent to t2.medium (~2 vCPU, 4GB RAM)
+    name           = "nodecloud"
+    vm_size        = "Standard_B2s"
     vnet_subnet_id = azurerm_subnet.mario_subnet.id
 
-    # Auto-scaling equivalent to scaling_config { min_size=1, max_size=2 }
+    # Auto-scaling — node_count must be omitted when enable_auto_scaling = true
     enable_auto_scaling = true
-    min_count            = 1
-    max_count            = 2
+    min_count           = 1
+    max_count           = 2
   }
 
   # System-assigned managed identity replaces all EKS IAM roles:
