@@ -64,3 +64,10 @@ output "cluster_name" {
 output "resource_group" {
   value = azurerm_resource_group.mario_rg.name
 }
+
+# Grant AKS managed identity Network Contributor so it can create public IPs
+resource "azurerm_role_assignment" "aks_network_contributor" {
+  scope                = azurerm_resource_group.mario_rg.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.mario_aks.identity[0].principal_id
+}

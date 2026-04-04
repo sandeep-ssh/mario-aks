@@ -83,6 +83,26 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
+      # Assign Network Contributor to the kubelet identity so the
+      # Load Balancer can create and read public IPs without 403 errors
+      - name: Grant AKS Kubelet Network Contributor Role
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          KUBELET_PRINCIPAL_ID=$(az aks show \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.CLUSTER_NAME }} \
+            --query "identityProfile.kubeletidentity.objectId" -o tsv)
+
+          echo "Kubelet Principal ID: $KUBELET_PRINCIPAL_ID"
+
+          az role assignment create \
+            --assignee $KUBELET_PRINCIPAL_ID \
+            --role "Network Contributor" \
+            --scope /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }} \
+            --only-show-errors || echo "Role may already exist, continuing..."
+
+          echo "✅ Network Contributor role assigned to AKS kubelet identity"
+
   # -------------------------------------------------------
   # JOB 2: Deploy, wait 20 mins, then auto-destroy
   # -------------------------------------------------------
@@ -148,13 +168,13 @@ jobs:
           fi
 
       # -------------------------------------------------------
-      # Auto-destroy after 20 minutes
+      # Auto-destroy after 30 minutes
       # -------------------------------------------------------
-      - name: ⏳ Wait 20 minutes before destroying
+      - name: ⏳ Wait 30 minutes before destroying
         run: |
-          echo "🎮 Mario is live! Auto-destroying in 20 minutes..."
-          echo "⏰ Destroy scheduled at: $(date -d '+20 minutes' '+%Y-%m-%d %H:%M:%S UTC')"
-          sleep 1200
+          echo "🎮 Mario is live! Auto-destroying in 30 minutes..."
+          echo "⏰ Destroy scheduled at: $(date -d '+30 minutes' '+%Y-%m-%d %H:%M:%S UTC')"
+          sleep 1800
 
       - name: Terraform Init (for destroy)
         run: |
