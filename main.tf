@@ -36,7 +36,7 @@ resource "azurerm_kubernetes_cluster" "mario_aks" {
     vnet_subnet_id = azurerm_subnet.mario_subnet.id
 
     # Auto-scaling equivalent to scaling_config { min_size=1, max_size=2 }
-    auto_scaling_enabled = true
+    enable_auto_scaling = true
     min_count            = 1
     max_count            = 2
   }
