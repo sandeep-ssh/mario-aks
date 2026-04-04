@@ -47,6 +47,9 @@ resource "azurerm_kubernetes_cluster" "mario_aks" {
     dns_service_ip    = "10.1.0.10"
   }
 
+  # ✅ OIDC issuer was enabled on the existing cluster and cannot be disabled
+  oidc_issuer_enabled = true
+
   tags = {
     Environment = "mario-game"
   }
