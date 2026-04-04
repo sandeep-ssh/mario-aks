@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mario-service
+  annotations:
+    # AKS-specific: ensures an Azure public Load Balancer is provisioned
+    service.beta.kubernetes.io/azure-load-balancer-resource-group: mario-aks-rg
+spec:
+  type: LoadBalancer
+  selector:
+    app: mario
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
