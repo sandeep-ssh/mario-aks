@@ -29,7 +29,7 @@ resource "azurerm_kubernetes_cluster" "mario_aks" {
 
   default_node_pool {
     name                = "nodecloud"
-    vm_size             = "Standard_D2ps_v5"
+    vm_size             = "Standard_D2s_v3"
     vnet_subnet_id      = azurerm_subnet.mario_subnet.id
     enable_auto_scaling = true
     min_count           = 1
