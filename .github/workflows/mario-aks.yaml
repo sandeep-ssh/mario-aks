@@ -41,6 +41,19 @@ jobs:
               "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
             }
 
+      # ✅ NEW: Grant the service principal permission to create role assignments
+      # Run this ONCE manually if preferred, but having it here makes it idempotent
+      - name: Grant SP User Access Administrator Role
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          echo "Granting User Access Administrator to service principal..."
+          az role assignment create \
+            --assignee "${{ secrets.AZURE_SP_OBJECT_ID }}" \
+            --role "User Access Administrator" \
+            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
+            --only-show-errors || echo "Role already exists, continuing..."
+          echo "✅ User Access Administrator granted"
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -83,8 +96,7 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      # Assign Network Contributor to the kubelet identity so the
-      # Load Balancer can create and read public IPs without 403 errors
+      # Kept as a safety net in case Terraform role assignment hits a race condition
       - name: Grant AKS Kubelet Network Contributor Role
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
@@ -104,7 +116,7 @@ jobs:
           echo "✅ Network Contributor role assigned to AKS kubelet identity"
 
   # -------------------------------------------------------
-  # JOB 2: Deploy, wait 20 mins, then auto-destroy
+  # JOB 2: Deploy, wait 30 mins, then auto-destroy
   # -------------------------------------------------------
   deploy-and-destroy:
     name: Deploy Mario App
@@ -167,9 +179,6 @@ jobs:
             exit 1
           fi
 
-      # -------------------------------------------------------
-      # Auto-destroy after 30 minutes
-      # -------------------------------------------------------
       - name: ⏳ Wait 30 minutes before destroying
         run: |
           echo "🎮 Mario is live! Auto-destroying in 30 minutes..."

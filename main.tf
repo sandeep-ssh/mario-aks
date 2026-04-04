@@ -65,9 +65,22 @@ output "resource_group" {
   value = azurerm_resource_group.mario_rg.name
 }
 
-# Grant AKS managed identity Network Contributor so it can create public IPs
+# Grant AKS cluster (system) identity Network Contributor on the resource group
+# This allows the control plane to manage networking resources
 resource "azurerm_role_assignment" "aks_network_contributor" {
   scope                = azurerm_resource_group.mario_rg.id
   role_definition_name = "Network Contributor"
   principal_id         = azurerm_kubernetes_cluster.mario_aks.identity[0].principal_id
+
+  depends_on = [azurerm_kubernetes_cluster.mario_aks]
+}
+
+# Grant AKS kubelet identity Network Contributor on the resource group
+# This allows nodes to create/manage Load Balancer public IPs
+resource "azurerm_role_assignment" "aks_kubelet_network_contributor" {
+  scope                = azurerm_resource_group.mario_rg.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.mario_aks.kubelet_identity[0].object_id
+
+  depends_on = [azurerm_kubernetes_cluster.mario_aks]
 }
