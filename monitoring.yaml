@@ -8,8 +8,7 @@ metadata:
 
 ---
 # -------------------------------------------------------
-# ALLOY CONFIG — collects metrics, logs and ships to
-# Grafana Cloud via remote_write (Prometheus) + Loki
+# ALLOY CONFIG
 # -------------------------------------------------------
 apiVersion: v1
 kind: ConfigMap
@@ -25,16 +24,9 @@ data:
     }
 
     prometheus.scrape "nodes" {
-      targets    = discovery.kubernetes.nodes.targets
-      forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+      targets         = discovery.kubernetes.nodes.targets
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
       scrape_interval = "15s"
-
-      relabel_rules {
-        source_labels = ["__address__"]
-        regex         = "(.+):.*"
-        target_label  = "__address__"
-        replacement   = "${1}:10250"
-      }
     }
 
     // ── KUBERNETES POD METRICS ───────────────────────────
@@ -45,19 +37,10 @@ data:
     discovery.relabel "pods" {
       targets = discovery.kubernetes.pods.targets
 
-      // only scrape pods with annotation prometheus.io/scrape: "true"
       rule {
         source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
         action        = "keep"
         regex         = "true"
-      }
-
-      rule {
-        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_port"]
-        action        = "replace"
-        target_label  = "__address__"
-        regex         = "(.+)"
-        replacement   = "${1}"
       }
 
       rule {
@@ -77,8 +60,8 @@ data:
     }
 
     prometheus.scrape "pods" {
-      targets    = discovery.relabel.pods.output
-      forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+      targets         = discovery.relabel.pods.output
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
       scrape_interval = "15s"
     }
 
@@ -90,14 +73,9 @@ data:
       forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
       scrape_interval = "15s"
       metrics_path    = "/"
-
-      relabel_rules {
-        target_label = "app"
-        replacement  = "mario"
-      }
     }
 
-    // ── KUBERNETES EVENTS + CONTAINER LOGS ──────────────
+    // ── KUBERNETES CONTAINER LOGS ────────────────────────
     discovery.kubernetes "all_pods" {
       role = "pod"
     }
@@ -107,6 +85,7 @@ data:
       forward_to = [loki.write.grafana_cloud.receiver]
     }
 
+    // ── KUBERNETES EVENTS ────────────────────────────────
     loki.source.kubernetes_events "cluster_events" {
       forward_to = [loki.write.grafana_cloud.receiver]
     }
@@ -136,7 +115,7 @@ data:
 
 ---
 # -------------------------------------------------------
-# ALLOY RBAC — needs cluster-wide read access to scrape
+# RBAC
 # -------------------------------------------------------
 apiVersion: v1
 kind: ServiceAccount
@@ -150,21 +129,51 @@ kind: ClusterRole
 metadata:
   name: alloy
 rules:
+  # Core resources — needed for pod/node/service discovery and log collection
   - apiGroups: [""]
     resources:
       - nodes
       - nodes/proxy
       - nodes/metrics
       - pods
+      - pods/log
+      - pods/exec
       - services
       - endpoints
       - events
       - namespaces
+      - configmaps
+      - secrets
+      - replicationcontrollers
+      - persistentvolumes
+      - persistentvolumeclaims
     verbs: ["get", "list", "watch"]
+  # Apps resources — for deployment/daemonset/statefulset discovery
   - apiGroups: ["apps"]
-    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    resources:
+      - deployments
+      - replicasets
+      - daemonsets
+      - statefulsets
     verbs: ["get", "list", "watch"]
-  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+  # Batch resources — for job/cronjob discovery
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  # Networking resources — for ingress discovery
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+    verbs: ["get", "list", "watch"]
+  # Non-resource URLs — for scraping /metrics endpoints directly
+  - nonResourceURLs:
+      - /metrics
+      - /metrics/cadvisor
+      - /healthz
+      - /readyz
+      - /livez
     verbs: ["get"]
 
 ---
@@ -183,7 +192,8 @@ subjects:
 
 ---
 # -------------------------------------------------------
-# ALLOY SECRET — Grafana Cloud credentials
+# SECRET — Grafana Cloud credentials
+# Actual values injected by GitHub Actions at deploy time
 # -------------------------------------------------------
 apiVersion: v1
 kind: Secret
@@ -200,7 +210,7 @@ stringData:
 
 ---
 # -------------------------------------------------------
-# ALLOY DAEMONSET — runs on every node
+# DAEMONSET — runs on every node
 # -------------------------------------------------------
 apiVersion: apps/v1
 kind: DaemonSet
@@ -264,7 +274,7 @@ spec:
 
 ---
 # -------------------------------------------------------
-# ALLOY SERVICE — exposes metrics endpoint
+# SERVICE
 # -------------------------------------------------------
 apiVersion: v1
 kind: Service
