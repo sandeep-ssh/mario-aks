@@ -169,7 +169,7 @@ jobs:
 
       - name: Deploy Grafana k8s monitoring
         run: |
-          helm upgrade --install --rollback-on-failure --timeout 300s \
+          helm upgrade --install --timeout 300s \
             grafana-k8s-monitoring grafana/k8s-monitoring \
             --version "^3" \
             --namespace "default" \
