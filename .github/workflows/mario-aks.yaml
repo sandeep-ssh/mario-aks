@@ -19,11 +19,37 @@ env:
 
 jobs:
   # -------------------------------------------------------
-  # JOB 1: Terraform — provision the AKS cluster
+  # JOB 1: SonarCloud — security & code quality scan
+  # -------------------------------------------------------
+  sonarcloud:
+    name: SonarCloud Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarCloud Scan
+        uses: SonarSource/sonarcloud-github-action@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=${{ secrets.SONAR_PROJECT_KEY }}
+            -Dsonar.organization=${{ secrets.SONAR_ORG }}
+            -Dsonar.sources=.
+            -Dsonar.exclusions=**/.terraform/**,**/*.tfstate,**/*.tfstate.backup
+
+  # -------------------------------------------------------
+  # JOB 2: Terraform — provision AKS cluster
   # -------------------------------------------------------
   terraform:
     name: Provision AKS Cluster
     runs-on: ubuntu-latest
+    needs: sonarcloud
     if: github.event_name == 'push' || github.event_name == 'pull_request'
 
     steps:
@@ -40,19 +66,6 @@ jobs:
               "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
               "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
             }
-
-      # ✅ NEW: Grant the service principal permission to create role assignments
-      # Run this ONCE manually if preferred, but having it here makes it idempotent
-      - name: Grant SP User Access Administrator Role
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        run: |
-          echo "Granting User Access Administrator to service principal..."
-          az role assignment create \
-            --assignee "${{ secrets.AZURE_SP_OBJECT_ID }}" \
-            --role "User Access Administrator" \
-            --scope "/subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}" \
-            --only-show-errors || echo "Role already exists, continuing..."
-          echo "✅ User Access Administrator granted"
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
@@ -96,7 +109,6 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
 
-      # Kept as a safety net in case Terraform role assignment hits a race condition
       - name: Grant AKS Kubelet Network Contributor Role
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
@@ -105,21 +117,20 @@ jobs:
             --name ${{ env.CLUSTER_NAME }} \
             --query "identityProfile.kubeletidentity.objectId" -o tsv)
 
-          echo "Kubelet Principal ID: $KUBELET_PRINCIPAL_ID"
-
           az role assignment create \
             --assignee $KUBELET_PRINCIPAL_ID \
             --role "Network Contributor" \
             --scope /subscriptions/${{ secrets.AZURE_SUBSCRIPTION_ID }}/resourceGroups/${{ env.RESOURCE_GROUP }} \
             --only-show-errors || echo "Role may already exist, continuing..."
 
-          echo "✅ Network Contributor role assigned to AKS kubelet identity"
+          echo "✅ Network Contributor role assigned"
 
   # -------------------------------------------------------
-  # JOB 2: Deploy, wait 30 mins, then auto-destroy
+  # JOB 3: Deploy Grafana Alloy (permanent monitoring)
+  # Injects Grafana Cloud secrets at deploy time
   # -------------------------------------------------------
-  deploy-and-destroy:
-    name: Deploy Mario App
+  deploy-monitoring:
+    name: Deploy Grafana Alloy
     runs-on: ubuntu-latest
     needs: terraform
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -139,10 +150,64 @@ jobs:
               "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
             }
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --name ${{ env.CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - name: Inject Grafana Cloud secrets into manifest
+        run: |
+          sed -i "s|REPLACE_WITH_PROM_URL|${{ secrets.GRAFANA_CLOUD_PROM_URL }}|g" monitoring.yaml
+          sed -i "s|REPLACE_WITH_PROM_USER|${{ secrets.GRAFANA_CLOUD_PROM_USER }}|g" monitoring.yaml
+          sed -i "s|REPLACE_WITH_LOKI_URL|${{ secrets.GRAFANA_CLOUD_LOKI_URL }}|g" monitoring.yaml
+          sed -i "s|REPLACE_WITH_LOKI_USER|${{ secrets.GRAFANA_CLOUD_LOKI_USER }}|g" monitoring.yaml
+          sed -i "s|REPLACE_WITH_API_KEY|${{ secrets.GRAFANA_CLOUD_API_KEY }}|g" monitoring.yaml
+
+      - name: Deploy Grafana Alloy
+        run: |
+          kubectl apply -f monitoring.yaml
+          echo "⏳ Waiting for Alloy DaemonSet to be ready..."
+          kubectl rollout status daemonset/alloy -n monitoring --timeout=120s
+          echo "✅ Grafana Alloy is running and shipping metrics to Grafana Cloud"
+
+      - name: Print Alloy status
+        run: |
+          echo "📊 Alloy pods running on nodes:"
+          kubectl get pods -n monitoring -o wide
+          echo ""
+          echo "📈 Metrics being collected:"
+          echo "  - Node metrics (CPU, memory, disk)"
+          echo "  - Pod/container metrics"
+          echo "  - Mario app HTTP metrics"
+          echo "  - Kubernetes events + container logs"
+          echo ""
+          echo "🔗 View in Grafana Cloud → Explore → Select Prometheus or Loki"
+
+  # -------------------------------------------------------
+  # JOB 4: Deploy Mario, keep live 30 mins, destroy Mario only
+  # -------------------------------------------------------
+  deploy-and-destroy:
+    name: Deploy Mario App
+    runs-on: ubuntu-latest
+    needs: deploy-monitoring
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
         with:
-          terraform_version: ${{ env.TF_VERSION }}
+          creds: |
+            {
+              "clientId": "${{ secrets.AZURE_CLIENT_ID }}",
+              "clientSecret": "${{ secrets.AZURE_CLIENT_SECRET }}",
+              "subscriptionId": "${{ secrets.AZURE_SUBSCRIPTION_ID }}",
+              "tenantId": "${{ secrets.AZURE_TENANT_ID }}"
+            }
 
       - name: Get AKS credentials
         run: |
@@ -151,23 +216,24 @@ jobs:
             --name ${{ env.CLUSTER_NAME }} \
             --overwrite-existing
 
-      - name: Deploy to AKS
+      - name: Deploy Mario to AKS
         run: |
           kubectl apply -f deployment.yaml
           kubectl apply -f service.yaml
 
-      - name: Wait for pods to be ready
+      - name: Wait for Mario pods to be ready
         run: |
           kubectl rollout status deployment/mario-deployment --timeout=120s
 
-      - name: Get External IP
+      - name: Get Mario External IP
         run: |
-          echo "Waiting for LoadBalancer IP..."
+          echo "Waiting for Mario LoadBalancer IP..."
           for i in {1..30}; do
             IP=$(kubectl get service mario-service \
               -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null)
             if [ -n "$IP" ]; then
               echo "✅ Mario is live at: http://$IP"
+              echo "📊 Mario metrics flowing to Grafana Cloud in real time"
               echo "MARIO_IP=$IP" >> $GITHUB_ENV
               break
             fi
@@ -175,46 +241,27 @@ jobs:
             sleep 15
           done
           if [ -z "$IP" ]; then
-            echo "⚠️ Timed out waiting for IP. Run: kubectl get service mario-service"
+            echo "⚠️ Timed out waiting for IP"
             exit 1
           fi
 
-      - name: ⏳ Wait 30 minutes before destroying
+      - name: ⏳ Wait 30 minutes
         run: |
-          echo "🎮 Mario is live! Auto-destroying in 30 minutes..."
-          echo "⏰ Destroy scheduled at: $(date -d '+30 minutes' '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "🎮 Mario is live! Destroying in 30 minutes..."
+          echo "⏰ Destroy at: $(date -d '+30 minutes' '+%Y-%m-%d %H:%M:%S UTC')"
           sleep 1800
 
-      - name: Terraform Init (for destroy)
+      - name: Destroy Mario only
         run: |
-          terraform init -reconfigure \
-            -backend-config="resource_group_name=${{ env.STATE_RG }}" \
-            -backend-config="storage_account_name=${{ secrets.STORAGE_ACCOUNT_NAME }}" \
-            -backend-config="container_name=${{ env.STATE_CONTAINER }}" \
-            -backend-config="key=${{ env.STATE_KEY }}" \
-            -backend-config="access_key=${{ secrets.STORAGE_ACCESS_KEY }}"
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: 🗑️ Terraform Destroy
-        run: terraform destroy -auto-approve
-        env:
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-
-      - name: ✅ Destroy complete
-        run: echo "✅ All infrastructure destroyed. No Azure costs accruing."
+          kubectl delete -f deployment.yaml --ignore-not-found
+          kubectl delete -f service.yaml --ignore-not-found
+          echo "✅ Mario destroyed. Alloy still shipping metrics to Grafana Cloud."
 
   # -------------------------------------------------------
-  # JOB 3: Manual destroy (workflow_dispatch)
+  # JOB 5: Manual full destroy including monitoring
   # -------------------------------------------------------
   destroy:
-    name: Destroy Infrastructure
+    name: Destroy All Infrastructure
     runs-on: ubuntu-latest
     if: github.event_name == 'workflow_dispatch'
     environment: destroy-approval
@@ -260,3 +307,6 @@ jobs:
           ARM_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+
+      - name: ✅ Full destroy complete
+        run: echo "✅ All infrastructure destroyed including Alloy monitoring."

@@ -1,0 +1,281 @@
+# -------------------------------------------------------
+# NAMESPACE
+# -------------------------------------------------------
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+
+---
+# -------------------------------------------------------
+# ALLOY CONFIG — collects metrics, logs and ships to
+# Grafana Cloud via remote_write (Prometheus) + Loki
+# -------------------------------------------------------
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-config
+  namespace: monitoring
+data:
+  config.alloy: |
+
+    // ── KUBERNETES NODE METRICS ──────────────────────────
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    prometheus.scrape "nodes" {
+      targets    = discovery.kubernetes.nodes.targets
+      forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+      scrape_interval = "15s"
+
+      relabel_rules {
+        source_labels = ["__address__"]
+        regex         = "(.+):.*"
+        target_label  = "__address__"
+        replacement   = "${1}:10250"
+      }
+    }
+
+    // ── KUBERNETES POD METRICS ───────────────────────────
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.relabel "pods" {
+      targets = discovery.kubernetes.pods.targets
+
+      // only scrape pods with annotation prometheus.io/scrape: "true"
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_scrape"]
+        action        = "keep"
+        regex         = "true"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_annotation_prometheus_io_port"]
+        action        = "replace"
+        target_label  = "__address__"
+        regex         = "(.+)"
+        replacement   = "${1}"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        target_label  = "namespace"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        target_label  = "pod"
+      }
+
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        target_label  = "container"
+      }
+    }
+
+    prometheus.scrape "pods" {
+      targets    = discovery.relabel.pods.output
+      forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+      scrape_interval = "15s"
+    }
+
+    // ── MARIO APP HTTP METRICS ───────────────────────────
+    prometheus.scrape "mario_app" {
+      targets = [
+        { "__address__" = "mario-service.default.svc.cluster.local:80" },
+      ]
+      forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+      scrape_interval = "15s"
+      metrics_path    = "/"
+
+      relabel_rules {
+        target_label = "app"
+        replacement  = "mario"
+      }
+    }
+
+    // ── KUBERNETES EVENTS + CONTAINER LOGS ──────────────
+    discovery.kubernetes "all_pods" {
+      role = "pod"
+    }
+
+    loki.source.kubernetes "pod_logs" {
+      targets    = discovery.kubernetes.all_pods.targets
+      forward_to = [loki.write.grafana_cloud.receiver]
+    }
+
+    loki.source.kubernetes_events "cluster_events" {
+      forward_to = [loki.write.grafana_cloud.receiver]
+    }
+
+    // ── REMOTE WRITE TO GRAFANA CLOUD ───────────────────
+    prometheus.remote_write "grafana_cloud" {
+      endpoint {
+        url = env("GRAFANA_CLOUD_PROM_URL")
+
+        basic_auth {
+          username = env("GRAFANA_CLOUD_PROM_USER")
+          password = env("GRAFANA_CLOUD_API_KEY")
+        }
+      }
+    }
+
+    loki.write "grafana_cloud" {
+      endpoint {
+        url = env("GRAFANA_CLOUD_LOKI_URL")
+
+        basic_auth {
+          username = env("GRAFANA_CLOUD_LOKI_USER")
+          password = env("GRAFANA_CLOUD_API_KEY")
+        }
+      }
+    }
+
+---
+# -------------------------------------------------------
+# ALLOY RBAC — needs cluster-wide read access to scrape
+# -------------------------------------------------------
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: alloy
+  namespace: monitoring
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: alloy
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - nodes/proxy
+      - nodes/metrics
+      - pods
+      - services
+      - endpoints
+      - events
+      - namespaces
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets", "daemonsets", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics", "/metrics/cadvisor"]
+    verbs: ["get"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: alloy
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: alloy
+subjects:
+  - kind: ServiceAccount
+    name: alloy
+    namespace: monitoring
+
+---
+# -------------------------------------------------------
+# ALLOY SECRET — Grafana Cloud credentials
+# -------------------------------------------------------
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alloy-credentials
+  namespace: monitoring
+type: Opaque
+stringData:
+  GRAFANA_CLOUD_PROM_URL: "REPLACE_WITH_PROM_URL"
+  GRAFANA_CLOUD_PROM_USER: "REPLACE_WITH_PROM_USER"
+  GRAFANA_CLOUD_LOKI_URL: "REPLACE_WITH_LOKI_URL"
+  GRAFANA_CLOUD_LOKI_USER: "REPLACE_WITH_LOKI_USER"
+  GRAFANA_CLOUD_API_KEY: "REPLACE_WITH_API_KEY"
+
+---
+# -------------------------------------------------------
+# ALLOY DAEMONSET — runs on every node
+# -------------------------------------------------------
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  namespace: monitoring
+  labels:
+    app: alloy
+spec:
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: alloy
+      tolerations:
+        - key: node-role.kubernetes.io/master
+          effect: NoSchedule
+      containers:
+        - name: alloy
+          image: grafana/alloy:latest
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            - --storage.path=/tmp/alloy
+          ports:
+            - containerPort: 12345
+              name: http-metrics
+          envFrom:
+            - secretRef:
+                name: alloy-credentials
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: varlibdockercontainers
+              mountPath: /var/lib/docker/containers
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: varlibdockercontainers
+          hostPath:
+            path: /var/lib/docker/containers
+
+---
+# -------------------------------------------------------
+# ALLOY SERVICE — exposes metrics endpoint
+# -------------------------------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: alloy-service
+  namespace: monitoring
+spec:
+  selector:
+    app: alloy
+  ports:
+    - port: 12345
+      targetPort: 12345
+      name: http-metrics
+  type: ClusterIP

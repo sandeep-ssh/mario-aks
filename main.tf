@@ -47,12 +47,29 @@ resource "azurerm_kubernetes_cluster" "mario_aks" {
     dns_service_ip    = "10.1.0.10"
   }
 
-  # ✅ OIDC issuer was enabled on the existing cluster and cannot be disabled
   oidc_issuer_enabled = true
 
   tags = {
     Environment = "mario-game"
   }
+}
+
+# Grant AKS cluster (system) identity Network Contributor on the resource group
+resource "azurerm_role_assignment" "aks_network_contributor" {
+  scope                = azurerm_resource_group.mario_rg.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.mario_aks.identity[0].principal_id
+
+  depends_on = [azurerm_kubernetes_cluster.mario_aks]
+}
+
+# Grant AKS kubelet identity Network Contributor on the resource group
+resource "azurerm_role_assignment" "aks_kubelet_network_contributor" {
+  scope                = azurerm_resource_group.mario_rg.id
+  role_definition_name = "Network Contributor"
+  principal_id         = azurerm_kubernetes_cluster.mario_aks.kubelet_identity[0].object_id
+
+  depends_on = [azurerm_kubernetes_cluster.mario_aks]
 }
 
 output "kube_config" {
@@ -66,24 +83,4 @@ output "cluster_name" {
 
 output "resource_group" {
   value = azurerm_resource_group.mario_rg.name
-}
-
-# Grant AKS cluster (system) identity Network Contributor on the resource group
-# This allows the control plane to manage networking resources
-resource "azurerm_role_assignment" "aks_network_contributor" {
-  scope                = azurerm_resource_group.mario_rg.id
-  role_definition_name = "Network Contributor"
-  principal_id         = azurerm_kubernetes_cluster.mario_aks.identity[0].principal_id
-
-  depends_on = [azurerm_kubernetes_cluster.mario_aks]
-}
-
-# Grant AKS kubelet identity Network Contributor on the resource group
-# This allows nodes to create/manage Load Balancer public IPs
-resource "azurerm_role_assignment" "aks_kubelet_network_contributor" {
-  scope                = azurerm_resource_group.mario_rg.id
-  role_definition_name = "Network Contributor"
-  principal_id         = azurerm_kubernetes_cluster.mario_aks.kubelet_identity[0].object_id
-
-  depends_on = [azurerm_kubernetes_cluster.mario_aks]
 }
