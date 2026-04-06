@@ -8,6 +8,12 @@ A full end-to-end DevSecOps project deploying the Super Mario game on Azure Kube
 [![Architecture](https://img.shields.io/badge/Architecture-ARM64-FF6C37?style=flat-square&logo=arm&logoColor=white)](https://learn.microsoft.com/en-us/azure/virtual-machines/dpsv5-dpdsv5-series)
 [![Docker](https://img.shields.io/badge/Docker-Hub-2496ED?style=flat-square&logo=docker&logoColor=white)](https://hub.docker.com/)
 
+## Architecture Diagram
+ 
+![Mario DevSecOps Architecture Diagram](./assets/MarioDevSecOps.png)
+
+![Implementation Guide Available here](./assets/MarioDevSecOpsImplementationGuide.pdf)
+
 ## Project Overview
 
 This project was built to demonstrate real-world cloud and DevSecOps engineering skills across the full software delivery lifecycle — from infrastructure provisioning and security scanning to live monitoring and automated teardown. The application itself (Super Mario) is intentionally simple, allowing focus on the engineering and operational infrastructure that surrounds it.
@@ -27,7 +33,6 @@ The pipeline is triggered by a single `git push`, and from that moment it provis
 - Implement ephemeral infrastructure with automatic lifecycle management to optimise cost
 - Produce comprehensive documentation suitable for enterprise and portfolio use
 
----
 ---
 
 ## Project Structure
@@ -95,9 +100,6 @@ Deploys the Mario application to the `default` namespace, waits for the external
 A `workflow_dispatch`-triggered job with a GitHub Environment approval gate, providing a controlled emergency stop at any time.
 
 ---
-## Architecture Diagram
- 
-![Mario DevSecOps Architecture Diagram](./assets/MarioDevSecOps.png)
 
 ## Azure Well-Architected Framework
 
@@ -291,4 +293,4 @@ Each of these extensions represents a direction rather than a destination. The v
 
 ---
 
-*Built with Terraform · GitHub Actions · Azure Kubernetes Service · Grafana Cloud · SonarCloud*
+*Built with Terraform · GitHub Actions · Azure Kubernetes Service · Grafana Cloud · SonarClou
