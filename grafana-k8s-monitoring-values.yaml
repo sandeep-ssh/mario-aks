@@ -1,0 +1,260 @@
+cluster:
+  name: AKS-CLOUD
+destinations:
+  - name: grafana-cloud-metrics
+    type: prometheus
+    url: https://prometheus-prod-41-prod-au-southeast-1.grafana.net/api/prom/push
+    auth:
+      type: basic
+      username: "3092184"
+      password: REPLACE_WITH_API_KEY
+  - name: grafana-cloud-logs
+    type: loki
+    url: https://logs-prod-026.grafana.net/loki/api/v1/push
+    auth:
+      type: basic
+      username: "1541767"
+      password: REPLACE_WITH_API_KEY
+  - name: gc-otlp-endpoint
+    type: otlp
+    url: https://otlp-gateway-prod-au-southeast-1.grafana.net/otlp
+    protocol: http
+    auth:
+      type: basic
+      username: "1583978"
+      password: REPLACE_WITH_API_KEY
+    metrics:
+      enabled: true
+    logs:
+      enabled: true
+    traces:
+      enabled: true
+  - name: grafana-cloud-profiles
+    type: pyroscope
+    url: https://profiles-prod-016.grafana.net:443
+    auth:
+      type: basic
+      username: "1583978"
+      password: REPLACE_WITH_API_KEY
+clusterMetrics:
+  enabled: true
+  opencost:
+    enabled: true
+    metricsSource: grafana-cloud-metrics
+    opencost:
+      exporter:
+        defaultClusterId: AKS-CLOUD
+      prometheus:
+        existingSecretName: grafana-cloud-metrics-grafana-k8s-monitoring
+        external:
+          url: https://prometheus-prod-41-prod-au-southeast-1.grafana.net/api/prom
+    podAnnotations:
+      kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+  kepler:
+    enabled: true
+  kube-state-metrics:
+    podAnnotations:
+      kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+clusterEvents:
+  enabled: true
+podLogs:
+  enabled: true
+applicationObservability:
+  enabled: true
+  receivers:
+    otlp:
+      grpc:
+        enabled: true
+        port: 4317
+      http:
+        enabled: true
+        port: 4318
+    zipkin:
+      enabled: true
+      port: 9411
+autoInstrumentation:
+  enabled: true
+  beyla:
+    deliverTracesToApplicationObservability: false
+profiling:
+  enabled: true
+alloy-metrics:
+  enabled: true
+  controller:
+    podAnnotations:
+      kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+  alloy:
+    extraEnv:
+      - name: GCLOUD_RW_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: alloy-metrics-remote-cfg-grafana-k8s-monitoring
+            key: password
+      - name: CLUSTER_NAME
+        value: AKS-CLOUD
+      - name: NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: GCLOUD_FM_COLLECTOR_ID
+        value: grafana-k8s-monitoring-$(CLUSTER_NAME)-$(NAMESPACE)-$(POD_NAME)
+  remoteConfig:
+    enabled: true
+    url: https://fleet-management-prod-017.grafana.net
+    auth:
+      type: basic
+      username: "1583978"
+      password: REPLACE_WITH_API_KEY
+alloy-singleton:
+  enabled: true
+  controller:
+    podAnnotations:
+      kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+  alloy:
+    extraEnv:
+      - name: GCLOUD_RW_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: alloy-singleton-remote-cfg-grafana-k8s-monitoring
+            key: password
+      - name: CLUSTER_NAME
+        value: AKS-CLOUD
+      - name: NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: GCLOUD_FM_COLLECTOR_ID
+        value: grafana-k8s-monitoring-$(CLUSTER_NAME)-$(NAMESPACE)-$(POD_NAME)
+  remoteConfig:
+    enabled: true
+    url: https://fleet-management-prod-017.grafana.net
+    auth:
+      type: basic
+      username: "1583978"
+      password: REPLACE_WITH_API_KEY
+alloy-logs:
+  enabled: true
+  controller:
+    podAnnotations:
+      kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+  alloy:
+    extraEnv:
+      - name: GCLOUD_RW_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: alloy-logs-remote-cfg-grafana-k8s-monitoring
+            key: password
+      - name: CLUSTER_NAME
+        value: AKS-CLOUD
+      - name: NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
+      - name: GCLOUD_FM_COLLECTOR_ID
+        value: grafana-k8s-monitoring-$(CLUSTER_NAME)-$(NAMESPACE)-alloy-logs-$(NODE_NAME)
+  remoteConfig:
+    enabled: true
+    url: https://fleet-management-prod-017.grafana.net
+    auth:
+      type: basic
+      username: "1583978"
+      password: REPLACE_WITH_API_KEY
+alloy-receiver:
+  enabled: true
+  alloy:
+    extraPorts:
+      - name: otlp-grpc
+        port: 4317
+        targetPort: 4317
+        protocol: TCP
+      - name: otlp-http
+        port: 4318
+        targetPort: 4318
+        protocol: TCP
+      - name: zipkin
+        port: 9411
+        targetPort: 9411
+        protocol: TCP
+    extraEnv:
+      - name: GCLOUD_RW_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: alloy-receiver-remote-cfg-grafana-k8s-monitoring
+            key: password
+      - name: CLUSTER_NAME
+        value: AKS-CLOUD
+      - name: NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
+      - name: GCLOUD_FM_COLLECTOR_ID
+        value: grafana-k8s-monitoring-$(CLUSTER_NAME)-$(NAMESPACE)-alloy-receiver-$(NODE_NAME)
+  controller:
+    podAnnotations:
+      kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+  remoteConfig:
+    enabled: true
+    url: https://fleet-management-prod-017.grafana.net
+    auth:
+      type: basic
+      username: "1583978"
+      password: REPLACE_WITH_API_KEY
+alloy-profiles:
+  enabled: true
+  controller:
+    podAnnotations:
+      kubernetes.azure.com/set-kube-service-host-fqdn: "true"
+  alloy:
+    extraEnv:
+      - name: GCLOUD_RW_API_KEY
+        valueFrom:
+          secretKeyRef:
+            name: alloy-profiles-remote-cfg-grafana-k8s-monitoring
+            key: password
+      - name: CLUSTER_NAME
+        value: AKS-CLOUD
+      - name: NAMESPACE
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.namespace
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+      - name: NODE_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: spec.nodeName
+      - name: GCLOUD_FM_COLLECTOR_ID
+        value: grafana-k8s-monitoring-$(CLUSTER_NAME)-$(NAMESPACE)-alloy-profiles-$(NODE_NAME)
+  remoteConfig:
+    enabled: true
+    url: https://fleet-management-prod-017.grafana.net
+    auth:
+      type: basic
+      username: "1583978"
+      password: REPLACE_WITH_API_KEY
